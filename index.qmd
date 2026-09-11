@@ -11,6 +11,8 @@ library(tidyverse)
 library(sf)
 library(leaflet)
 library(htmltools)
+library(plotly)
+library(htmlwidgets)
 
 # Load county boundaries and decennial census data
 fl_geo  <- read_rds("data/fl_geo.rds")
@@ -51,6 +53,52 @@ pal_hisp  <- colorNumeric("YlOrRd", domain = fl_map$diff_hisp)
 pal_white <- colorNumeric("Blues", domain = fl_map$diff_white)
 pal_black <- colorNumeric("Purples", domain = fl_map$diff_black)
 pal_asian <- colorNumeric("Greens", domain = fl_map$diff_asian)
+
+# Helper function to generate corresponding top 10 bar chart for each group
+make_top10_plot <- function(var_diff, var_2000, var_2020, label_name, palette_name) {
+  df <- fl_map |>
+    st_drop_geometry() |>
+    mutate(county = str_remove(NAME, " County, Florida")) |>
+    slice_max(.data[[var_diff]], n = 10) |>
+    mutate(county = fct_reorder(county, .data[[var_diff]]))
+
+  p <- ggplot(df, aes(
+    x = .data[[var_diff]],
+    y = county,
+    fill = .data[[var_diff]],
+    text = sprintf("<b>%s</b><br>Change: %+0.1f pts<br>2000: %.1f%% &rarr; 2020: %.1f%%",
+                   county, .data[[var_diff]], .data[[var_2000]], .data[[var_2020]])
+  )) +
+    geom_col(width = 0.68, show.legend = FALSE) +
+    geom_text(
+      aes(label = sprintf("%+0.1f pts", .data[[var_diff]])),
+      hjust = -0.15,
+      size = 3.3,
+      fontface = "bold",
+      color = "#333333"
+    ) +
+    scale_fill_distiller(palette = palette_name, direction = 1) +
+    scale_x_continuous(expand = expansion(mult = c(0.02, 0.2))) +
+    labs(
+      title = paste("Top 10 Counties:", label_name, "Change"),
+      x = "Percentage Point Change (2000–2020)",
+      y = NULL
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face = "bold", size = 13)
+    )
+
+  ggplotly(p, tooltip = "text") |>
+    config(displayModeBar = FALSE)
+}
+
+p_hisp  <- make_top10_plot("diff_hisp",  "hispanic_2000", "hispanic_2020", "Hispanic", "YlOrRd")
+p_white <- make_top10_plot("diff_white", "white_2000",    "white_2020",    "White",    "Blues")
+p_black <- make_top10_plot("diff_black", "black_2000",    "black_2020",    "Black",    "Purples")
+p_asian <- make_top10_plot("diff_asian", "asian_2000",    "asian_2020",    "Asian",    "Greens")
 ```
 
 ## Two Decades of Demographic Change Across Florida
@@ -70,33 +118,99 @@ Use the radio buttons in the upper right to toggle which demographic shift color
 #| echo: false
 
 leaflet(fl_map, width = "100%", height = "540px") |>
-  addTiles() |>
+  addProviderTiles(providers$CartoDB.Positron) |>
   addPolygons(
     group = "Hispanic Change",
     fillColor = ~pal_hisp(diff_hisp),
     fillOpacity = 0.7, weight = 1, color = "white",
-    label = labels
+    label = labels,
+    highlightOptions = highlightOptions(weight = 3, color = "#444", fillOpacity = 0.9, bringToFront = TRUE)
   ) |>
   addPolygons(
     group = "White Change",
     fillColor = ~pal_white(diff_white),
     fillOpacity = 0.7, weight = 1, color = "white",
-    label = labels
+    label = labels,
+    highlightOptions = highlightOptions(weight = 3, color = "#444", fillOpacity = 0.9, bringToFront = TRUE)
   ) |>
   addPolygons(
     group = "Black Change",
     fillColor = ~pal_black(diff_black),
     fillOpacity = 0.7, weight = 1, color = "white",
-    label = labels
+    label = labels,
+    highlightOptions = highlightOptions(weight = 3, color = "#444", fillOpacity = 0.9, bringToFront = TRUE)
   ) |>
   addPolygons(
     group = "Asian Change",
     fillColor = ~pal_asian(diff_asian),
     fillOpacity = 0.7, weight = 1, color = "white",
-    label = labels
+    label = labels,
+    highlightOptions = highlightOptions(weight = 3, color = "#444", fillOpacity = 0.9, bringToFront = TRUE)
   ) |>
   addLayersControl(
     baseGroups = c("Hispanic Change", "White Change", "Black Change", "Asian Change"),
     options = layersControlOptions(collapsed = FALSE)
-  )
+  ) |>
+  htmlwidgets::onRender("
+    function(el, x) {
+      var map = this;
+      map.on('baselayerchange', function(e) {
+        var group = e.name;
+        var mapGroupToId = {
+          'Hispanic Change': 'chart-hispanic',
+          'White Change': 'chart-white',
+          'Black Change': 'chart-black',
+          'Asian Change': 'chart-asian'
+        };
+        var targetId = mapGroupToId[group];
+        document.querySelectorAll('.demographic-chart').forEach(function(c) {
+          c.style.display = 'none';
+        });
+        var activeEl = document.getElementById(targetId);
+        if (activeEl) {
+          activeEl.style.display = 'block';
+          window.dispatchEvent(new Event('resize'));
+          var p = activeEl.querySelector('.plotly');
+          if (p && window.Plotly) {
+            Plotly.Plots.resize(p);
+          }
+        }
+      });
+    }
+  ")
 ```
+
+## Top Counties by Demographic Change
+
+::: {#chart-hispanic .demographic-chart}
+```{r}
+#| label: chart-hispanic
+#| echo: false
+p_hisp
+```
+:::
+
+::: {#chart-white .demographic-chart style="display: none;"}
+```{r}
+#| label: chart-white
+#| echo: false
+p_white
+```
+:::
+
+::: {#chart-black .demographic-chart style="display: none;"}
+```{r}
+#| label: chart-black
+#| echo: false
+p_black
+```
+:::
+
+::: {#chart-asian .demographic-chart style="display: none;"}
+```{r}
+#| label: chart-asian
+#| echo: false
+p_asian
+```
+:::
+
